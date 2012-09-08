@@ -249,8 +249,8 @@ enum GCDAsyncSocketConfig
 - (void)doReadTimeoutWithExtension:(NSTimeInterval)timeoutExtension;
 
 // Writing
-- (void)maybeDequeueWrite;
-- (void)doWriteData;
+- (void)maybeDequeueWrites;
+- (BOOL)doWriteData;
 - (void)completeCurrentWrite;
 - (void)endCurrentWrite;
 - (void)setupWriteTimerWithTimeout:(NSTimeInterval)timeout;
@@ -976,7 +976,9 @@ enum GCDAsyncSocketConfig
 #pragma mark -
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-@implementation GCDAsyncSocket
+@implementation GCDAsyncSocket {
+	NSUInteger _depth;
+}
 
 - (id)init
 {
@@ -2533,7 +2535,7 @@ enum GCDAsyncSocketConfig
 	// Dequeue any pending read/write requests
 	
 	[self maybeDequeueRead];
-	[self maybeDequeueWrite];
+	[self maybeDequeueWrites];
 }
 
 - (void)didNotConnect:(int)aConnectIndex error:(NSError *)error
@@ -5154,13 +5156,13 @@ enum GCDAsyncSocketConfig
 	GCDAsyncWritePacket *packet = [[GCDAsyncWritePacket alloc] initWithData:data timeout:timeout tag:tag];
 	
 	dispatch_async(socketQueue, ^{ @autoreleasepool {
-		
+		_depth = 0;
 		LogTrace();
 		
 		if ((flags & kSocketStarted) && !(flags & kForbidReadsWrites))
 		{
 			[writeQueue addObject:packet];
-			[self maybeDequeueWrite];
+			[self maybeDequeueWrites];
 		}
 	}});
 	
@@ -5215,16 +5217,15 @@ enum GCDAsyncSocketConfig
  * 
  * This method also handles auto-disconnect post read/write completion.
 **/
-- (void)maybeDequeueWrite
+- (void)maybeDequeueWrites
 {
 	LogTrace();
 	NSAssert(dispatch_get_current_queue() == socketQueue, @"Must be dispatched on socketQueue");
 	
-	
 	// If we're not currently processing a write AND we have an available write stream
 	if ((currentWrite == nil) && (flags & kConnected))
 	{
-		if ([writeQueue count] > 0)
+		while ([writeQueue count] > 0)
 		{
 			// Dequeue the next object in the write queue
 			currentWrite = [writeQueue objectAtIndex:0];
@@ -5249,10 +5250,16 @@ enum GCDAsyncSocketConfig
 				[self setupWriteTimerWithTimeout:currentWrite->timeout];
 				
 				// Immediately write, if possible
-				[self doWriteData];
+				BOOL writeSucceeded = [self doWriteData];
+				
+				if (!writeSucceeded)
+				{
+					break;
+				}
 			}
 		}
-		else if (flags & kDisconnectAfterWrites)
+		
+		if (flags & kDisconnectAfterWrites)
 		{
 			if (flags & kDisconnectAfterReads)
 			{
@@ -5269,7 +5276,11 @@ enum GCDAsyncSocketConfig
 	}
 }
 
-- (void)doWriteData
+
+/**
+* Returns YES if the full write completed without an error, else NO.
+**/
+- (BOOL)doWriteData
 {
 	LogTrace();
 	
@@ -5296,7 +5307,7 @@ enum GCDAsyncSocketConfig
 				[self suspendWriteSource];
 			}
 		}
-		return;
+		return NO;
 	}
 	
 	if (!(flags & kSocketCanAcceptBytes))
@@ -5312,7 +5323,7 @@ enum GCDAsyncSocketConfig
 			
 			[self resumeWriteSource];
 		}
-		return;
+		return NO;
 	}
 	
 	if (flags & kStartingWriteTLS)
@@ -5348,7 +5359,7 @@ enum GCDAsyncSocketConfig
 			}
 		}
 		
-		return;
+		return NO;
 	}
 	
 	// Note: This method is not called if currentWrite is a GCDAsyncSpecialPacket (startTLS packet)
@@ -5606,11 +5617,6 @@ enum GCDAsyncSocketConfig
 	if (done)
 	{
 		[self completeCurrentWrite];
-		
-		if (!error)
-		{
-			[self maybeDequeueWrite];
-		}
 	}
 	else
 	{
@@ -5654,6 +5660,8 @@ enum GCDAsyncSocketConfig
 	}
 	
 	// Do not add any code here without first adding a return statement in the error case above.
+	
+	return done && !error;
 }
 
 - (void)completeCurrentWrite
@@ -5687,6 +5695,7 @@ enum GCDAsyncSocketConfig
 	
 	currentWrite = nil;
 }
+
 
 - (void)setupWriteTimerWithTimeout:(NSTimeInterval)timeout
 {
@@ -5806,7 +5815,7 @@ enum GCDAsyncSocketConfig
 			flags |= kQueuedTLS;
 			
 			[self maybeDequeueRead];
-			[self maybeDequeueWrite];
+			[self maybeDequeueWrites];
 		}
 	}});
 	
@@ -6516,7 +6525,7 @@ static OSStatus SSLWriteFunction(SSLConnectionRef connection, const void *data, 
 		[self endCurrentWrite];
 		
 		[self maybeDequeueRead];
-		[self maybeDequeueWrite];
+		[self maybeDequeueWrites];
 	}
 	else if (status == errSSLWouldBlock)
 	{
@@ -6565,7 +6574,7 @@ static OSStatus SSLWriteFunction(SSLConnectionRef connection, const void *data, 
 		[self endCurrentWrite];
 		
 		[self maybeDequeueRead];
-		[self maybeDequeueWrite];
+		[self maybeDequeueWrites];
 	}
 }
 
