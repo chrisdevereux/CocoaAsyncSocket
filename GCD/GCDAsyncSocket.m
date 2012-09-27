@@ -3628,7 +3628,7 @@ enum GCDAsyncSocketConfig
 		LogVerbose(@"writeEventBlock");
 		
 		flags |= kSocketCanAcceptBytes;
-		[self doWriteData];
+		[self resumeWriteData];
 	}});
 	
 	// Setup cancel handlers
@@ -5278,8 +5278,24 @@ enum GCDAsyncSocketConfig
 
 
 /**
-* Returns YES if the full write completed without an error, else NO.
-**/
+ Resumes the current write if needed, then makes any queued writes, if a
+ write is in progress.
+*/
+
+- (void)resumeWriteData
+{
+    BOOL didWriteData = [self doWriteData];
+    
+    if (didWriteData)
+    {
+        [self maybeDequeueWrites];
+    }
+}
+
+
+/**
+ * Returns YES if the full write completed without an error, else NO.
+ **/
 - (BOOL)doWriteData
 {
 	LogTrace();
@@ -5657,11 +5673,11 @@ enum GCDAsyncSocketConfig
 	if (error)
 	{
 		[self closeWithError:[self errnoErrorWithReason:@"Error in write() function"]];
+        
+        return NO;
 	}
 	
-	// Do not add any code here without first adding a return statement in the error case above.
-	
-	return done && !error;
+	return done;
 }
 
 - (void)completeCurrentWrite
@@ -5771,7 +5787,7 @@ enum GCDAsyncSocketConfig
 			
 			// Unpause writes, and continue
 			flags &= ~kWritesPaused;
-			[self doWriteData];
+			[self resumeWriteData];
 		}
 		else
 		{
@@ -6841,7 +6857,7 @@ static void CFWriteStreamCallback (CFWriteStreamRef stream, CFStreamEventType ty
 				else
 				{
 					asyncSocket->flags |= kSocketCanAcceptBytes;
-					[asyncSocket doWriteData];
+					[asyncSocket resumeWriteData];
 				}
 			}});
 			
