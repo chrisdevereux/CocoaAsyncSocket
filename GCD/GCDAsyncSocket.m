@@ -976,9 +976,7 @@ enum GCDAsyncSocketConfig
 #pragma mark -
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-@implementation GCDAsyncSocket {
-	NSUInteger _depth;
-}
+@implementation GCDAsyncSocket
 
 - (id)init
 {
@@ -5156,7 +5154,6 @@ enum GCDAsyncSocketConfig
 	GCDAsyncWritePacket *packet = [[GCDAsyncWritePacket alloc] initWithData:data timeout:timeout tag:tag];
 	
 	dispatch_async(socketQueue, ^{ @autoreleasepool {
-		_depth = 0;
 		LogTrace();
 		
 		if ((flags & kSocketStarted) && !(flags & kForbidReadsWrites))
